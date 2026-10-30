@@ -12,7 +12,16 @@ const Account = require('./models/Account');
 const AuditEvent = require('./models/AuditEvent');
 const app = express();
 app.use(express.json({limit:'20kb'})); app.use(cookieParser());
-app.use(cors({origin: process.env.CLIENT_ORIGIN || 'http://127.0.0.1:5500', credentials:true}));
+const allowedOrigins = [
+  'https://guileless-griffin-00eace.netlify.app',
+  'http://127.0.0.1:5500',
+  'http://localhost:5500'
+];
+
+app.use(cors({
+  origin: allowedOrigins,
+  credentials: true
+}));
 app.use('/api/auth/login', rateLimit({windowMs:15*60*1000, max:8, standardHeaders:true, legacyHeaders:false}));
 const auth = (req,res,next)=>{const token=req.cookies.bank_session || (req.headers.authorization||'').replace(/^Bearer /,'');try{req.user=jwt.verify(token,process.env.JWT_SECRET);next();}catch{return res.status(401).json({error:'Authentication required.'});}};
 const admin = (req,res,next)=>req.user?.role==='admin'?next():res.status(403).json({error:'Administrator access required.'});
