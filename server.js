@@ -11,7 +11,10 @@ const Transaction = require('./models/Transaction');
 const Account = require('./models/Account');
 const AuditEvent = require('./models/AuditEvent');
 const app = express();
-app.use(express.json({limit:'20kb'})); app.use(cookieParser());
+
+app.set('trust proxy', 1);
+app.use(express.json({ limit: '20kb' }));
+app.use(cookieParser());
 const allowedOrigins = [
   'https://guileless-griffin-00eace.netlify.app',
   'http://127.0.0.1:5500',
@@ -20,7 +23,9 @@ const allowedOrigins = [
 
 app.use(cors({
   origin: allowedOrigins,
-  credentials: true
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
 }));
 app.use('/api/auth/login', rateLimit({windowMs:15*60*1000, max:8, standardHeaders:true, legacyHeaders:false}));
 const auth = (req,res,next)=>{const token=req.cookies.bank_session || (req.headers.authorization||'').replace(/^Bearer /,'');try{req.user=jwt.verify(token,process.env.JWT_SECRET);next();}catch{return res.status(401).json({error:'Authentication required.'});}};
@@ -28,9 +33,9 @@ const admin = (req,res,next)=>req.user?.role==='admin'?next():res.status(403).js
 const audit = (action,detail,transactionId='')=>AuditEvent.create({action,detail,transactionId}).catch(console.error);
 const safe = t => ({id:t.transactionId, transactionId:t.transactionId, type:t.type, sourceAccount:t.sourceAccount, destinationAccount:t.destinationAccount, account:t.sourceAccount&&t.destinationAccount?`${t.sourceAccount} → ${t.destinationAccount}`:(t.sourceAccount||t.destinationAccount), amount:t.amount, created:t.createdAt, lock:t.lockHeld||'—', waitsFor:t.waitsFor||'—', status:t.status});
 app.get('/api/health',(req,res)=>res.json({status:'ok',database:mongoose.connection.readyState===1?'connected':'disconnected'}));
-app.post('/api/auth/login',async(req,res)=>{try{const {username,password}=req.body||{};if(!username||!password)return res.status(400).json({error:'Username and password are required.'});const hash=process.env.ADMIN_PASSWORD_HASH;if(username!==process.env.ADMIN_USERNAME||!hash||!(await bcrypt.compare(password,hash)))return res.status(401).json({error:'Invalid credentials.'});const token=jwt.sign({sub:username,role:'admin'},process.env.JWT_SECRET,{expiresIn:'30m'});res.cookie('bank_session',token,{httpOnly:true,sameSite:'strict',secure:process.env.NODE_ENV==='production',maxAge:30*60*1000});res.json({message:'Signed in.'});}catch(e){res.status(500).json({error:'Unable to sign in.'});}});
-app.post('/api/auth/logout',(req,res)=>res.clearCookie('bank_session',{httpOnly:true,sameSite:'strict',secure:process.env.NODE_ENV==='production'}).json({message:'Signed out.'}));
-app.get('/api/auth/me',auth,(req,res)=>res.json({username:req.user.sub,role:req.user.role}));
+app.post('/api/auth/login',async(req,res)=>{try{const {username,password}=req.body||{};if(!username||!password)return res.status(400).json({error:'Username and password are required.'});const hash=process.env.ADMIN_PASSWORD_HASH;if(username!==process.env.ADMIN_USERNAME||!hash||!(await bcrypt.compare(password,hash)))return res.status(401).json({error:'Invalid credentials.'});const token=jwt.sign({sub:username,role:'admin'},process.env.JWT_SECRET,{expiresIn:'30m'});res.cookie('bank_session', token, { httpOnly: true, sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax', secure: process.env.NODE_ENV === 'production', maxAge: 30 * 60 * 1000 });res.json({message:'Signed in.'});}catch(e){res.status(500).json({error:'Unable to sign in.'});}});
+app.post('/api/auth/logout', (req, res) => res.clearCookie('bank_session', { httpOnly: true, sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax', secure: process.env.NODE_ENV === 'production' }).json({ message: 'Signed out.' }));
+  app.get('/api/auth/me',auth,(req,res)=>res.json({username:req.user.sub,role:req.user.role}));
 app.get('/api/accounts',async(req,res)=>{try{res.json(await Account.find({active:true}).select('accountNumber holderName balance currency accountType').sort({accountNumber:1}).lean());}catch{res.status(500).json({error:'Could not load accounts.'});}});
 app.get('/api/transactions',async(req,res)=>{try{const filter={};if(req.query.status)filter.status=req.query.status;if(req.query.type)filter.type=req.query.type;const rows=await Transaction.find(filter).sort({createdAt:-1}).limit(500).lean();res.json(rows.map(safe));}catch{res.status(500).json({error:'Could not load transactions.'});}});
 
@@ -396,14 +401,21 @@ app.post('/api/admin/deadlock-demo',auth,admin,async(req,res)=>{
 app.post('/api/admin/reset-demo',auth,admin,async(req,res)=>{try{await Transaction.deleteMany({});await AuditEvent.deleteMany({});await audit('Demo reset','Transaction register and audit history reset by admin.');res.json({message:'Demo data cleared.'});}catch{res.status(500).json({error:'Could not reset demo.'});}});
 app.use(express.static(path.join(__dirname,'public')));
 app.get('*',(req,res)=>res.sendFile(path.join(__dirname,'public','index.html')));
-const port=process.env.PORT||5000;
-if(!process.env.MONGODB_URI||!process.env.JWT_SECRET){console.error('Set MONGODB_URI and JWT_SECRET in .env before starting.');process.exit(1);}
-mongoose.connect(process.env.MONGODB_URI).then(()=>app.listen(port,()=>{
-  const url=`http://localhost:${port}`;
-  console.log(`Bank Operations API listening on ${url}`);
-  // Deadlock detection runs only when the user clicks Run detection.
-  if(process.platform==='win32'){
-    const {exec}=require('child_process');
-    exec(`start "" "${url}"`,error=>{if(error)console.log(`Open ${url} in your browser.`)});
-  }
-})).catch(e=>{console.error('MongoDB connection failed:',e.message);process.exit(1);});
+const port = process.env.PORT || 5000;
+
+if (!process.env.MONGODB_URI || !process.env.JWT_SECRET) {
+  console.error('Missing required environment variables: MONGODB_URI and/or JWT_SECRET.');
+  process.exit(1);
+}
+
+mongoose.connect(process.env.MONGODB_URI)
+  .then(() => {
+    app.listen(port, '0.0.0.0', () => {
+      console.log(`Bank Operations API listening on port ${port}`);
+      console.log(`MongoDB status: ${mongoose.connection.readyState === 1 ? 'connected' : 'disconnected'}`);
+    });
+  })
+  .catch(error => {
+    console.error('MongoDB connection failed:', error.message);
+    process.exit(1);
+  });
