@@ -11,13 +11,6 @@ const Transaction = require('./models/Transaction');
 const Account = require('./models/Account');
 const AuditEvent = require('./models/AuditEvent');
 const app = express();
-
-// Educational concurrency window: keep the first account lock long enough
-// for a second normal transaction to be submitted in the opposite direction.
-// This makes real form submissions capable of producing a circular wait.
-// Transactions retain their first lock until the user manually runs detection.
-// This lets multiple normal transfers overlap and form a real wait-for cycle.
-
 app.use(express.json({limit:'20kb'})); app.use(cookieParser());
 app.use(cors({origin: process.env.CLIENT_ORIGIN || 'http://127.0.0.1:5500', credentials:true}));
 app.use('/api/auth/login', rateLimit({windowMs:15*60*1000, max:8, standardHeaders:true, legacyHeaders:false}));
